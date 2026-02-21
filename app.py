@@ -179,8 +179,7 @@ if not analysis_df.empty:
     m_dice = dice_ml.Model(model=model, backend='sklearn')
     exp_dice = dice_ml.Dice(d_data, m_dice, method='random')
 
-    st.markdown(f"
-**Analyzing instance (Index: {selected_record_index}):**")
+    st.markdown(f"**Analyzing instance (Index: {selected_record_index}):**")
     st.dataframe(query)
 
     if st.button("Generate Action Plan"):
