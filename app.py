@@ -49,7 +49,7 @@ model, X_train, label_encoder = load_artifacts()
 
 # --- 2. Data Preprocessing ---
 @st.cache_data
-def get_dashboard_data(_label_encoder, expected_cols):
+def get_dashboard_data(_label_encoder, _expected_cols):
     df = pd.read_csv('broiler_health_noisy_dataset.csv')
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values(by=['Zone_ID', 'Date']).reset_index(drop=True)
@@ -64,7 +64,7 @@ def get_dashboard_data(_label_encoder, expected_cols):
     df['Target_Status'] = df.groupby('Zone_ID')['Health_Status'].shift(-1)
     
     df_encoded = pd.get_dummies(df, columns=['Zone_ID'], drop_first=True, dtype=int)
-    df_encoded = df_encoded.reindex(columns=['Date', 'Target_Status'] + list(expected_cols), fill_value=0)
+    df_encoded = df_encoded.reindex(columns=['Date', 'Target_Status'] + list(_expected_cols), fill_value=0)
 
     df_hist = df_encoded.dropna(subset=['Target_Status']).copy()
     df_live = df_encoded[df_encoded['Target_Status'].isna()].copy()
