@@ -29,7 +29,7 @@ model, X_train, label_encoder = load_artifacts()
 
 # Regenerate full preprocessed data (X_full, y_full) for dice_ml.Data definition
 @st.cache_data
-def get_full_preprocessed_data(loaded_label_encoder):
+def get_full_preprocessed_data(_loaded_label_encoder):
     df_full = pd.read_csv('broiler_health_noisy_dataset.csv')
 
     df_full['Date'] = pd.to_datetime(df_full['Date'])
@@ -65,7 +65,7 @@ def get_full_preprocessed_data(loaded_label_encoder):
 
     X_full = df_full.drop('Target_Health_Status', axis=1)
     y_full = df_full['Target_Health_Status']
-    y_full_encoded = loaded_label_encoder.transform(y_full)
+    y_full_encoded = _loaded_label_encoder.transform(y_full)
 
     return X_full, y_full_encoded
 
