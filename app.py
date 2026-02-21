@@ -86,10 +86,13 @@ st.markdown(
     for broiler chicken health, leveraging AI to predict potential 'At-Risk' statuses *before* they fully develop.
 
     The goal is to empower farm managers with actionable insights, enabling proactive interventions to maintain
+
     flock health, optimize production, and reduce losses.
 
     This dashboard integrates a machine learning model with eXplainable AI (XAI) techniques (SHAP and DiCE)
+
     to not only predict but also explain *why* a prediction was made and *how* to change an unfavorable outcome.
+
     """
 )
 
@@ -99,7 +102,8 @@ col_a, col_b = st.columns([1, 2])
 
 with col_a:
     st.subheader("⚠️ Current Risk Alerts")
-    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**. This is your first line of defense, providing a heads-up before issues escalate.")
+    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**.
+                 This is your first line of defense, providing a heads-up before issues escalate.")
     if not at_risk_latest.empty:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
@@ -157,10 +161,15 @@ st.markdown(
     that could shift an 'At-Risk' prediction to 'Healthy'. Think of it as a "What if?" scenario planner.
 
     **How to use it:**
+
     1.  **Select an 'At-Risk' record:** Choose a specific instance (e.g., a zone on a particular day) that the AI flagged.
+
     2.  **Generate Action Plan:** Click the button to see the suggested changes.
+
     3.  **Implement & Monitor:** These changes represent the *most efficient* ways to improve the predicted health status.
+
         Implementing them can help prevent actual health issues.
+
 
     *Note: Only controllable features (e.g., temperature, humidity, feed/water intake) are suggested for change.*"""
 )
