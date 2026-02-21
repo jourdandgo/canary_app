@@ -15,7 +15,7 @@ st.set_page_config(page_title="Canary Early Warning Dashboard", layout="wide")
 # --- 1. Load Artifacts ---
 @st.cache_resource
 def load_artifacts():
-    with open('model.pkl', 'rb') as f:
+    with open('random_forest_model_retrained.pkl', 'rb') as f:
         model = pickle.load(f)
     with open('X_train_data_retrained.pkl', 'rb') as f:
         X_train_data = pickle.load(f)
@@ -73,16 +73,27 @@ X_latest = latest_day_data.drop(['Date', 'Target_Health_Status'], axis=1)
 
 # --- 3. Dashboard UI ---
 st.title('🐔 Automated Canary: Poultry Health Dashboard')
-st.markdown(f"### Monitoring Status for: **{latest_date.strftime('%Y-%m-%d')}**")
+st.markdown(
+    """
+    Welcome to the **Automated Canary: Poultry Health Dashboard**! This tool provides an early warning system 
+    for broiler chicken health, leveraging AI to predict potential 'At-Risk' statuses *before* they fully develop.
 
-# Run Predictions for the latest day only
-latest_preds = model.predict(X_latest)
-at_risk_latest = X_latest[latest_preds == 1].copy()
+    The goal is to empower farm managers with actionable insights, enabling proactive interventions to maintain
+    flock health, optimize production, and reduce losses.
+
+    This dashboard integrates a machine learning model with eXplainable AI (XAI) techniques (SHAP and DiCE)
+    to not only predict but also explain *why* a prediction was made and *how* to change an unfavorable outcome.
+    """
+)
+
+st.markdown(f"### Monitoring Status for: **{latest_date.strftime('%Y-%m-%d')}**")
 
 col_a, col_b = st.columns([1, 2])
 
 with col_a:
     st.subheader("⚠️ Current Risk Alerts")
+    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**.
+                 This is your first line of defense, providing a heads-up before issues escalate.")
     if not at_risk_latest.empty:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
@@ -99,34 +110,63 @@ with col_b:
     @st.cache_data
     def get_shap_vals(_model, X_data):
         explainer = shap.TreeExplainer(_model)
+        # Corrected slicing for 3D shap_values output to get (n_samples, n_features)
         return explainer.shap_values(X_data)[:, :, 1]
 
-    st.subheader("📊 Why does the AI flag risk?")
+    st.subheader("📊 Why does the AI flag risk? (Global Feature Importance)")
+    st.markdown("This section helps you understand which factors generally contribute most to a chicken being predicted 'At-Risk'. The longer the bar, the more influence that feature has on the model's 'At-Risk' predictions.")
     s_vals = get_shap_vals(model, X_train)
     fig, ax = plt.subplots(figsize=(10, 5))
     shap.summary_plot(s_vals, X_train, plot_type="bar", show=False)
+    plt.title('Global Feature Importance (SHAP values for "At_Risk" class)')
     plt.tight_layout()
     st.pyplot(fig)
+    st.markdown(
+        """
+        **Key Insights from SHAP:**
+        *   **Environmental Factors:** `Max_Temperature_C`, `Avg_Humidity_Percent`, and `Temp_Change_3D` are often critical, highlighting the impact of barn climate on bird health.
+        *   **Behavioral Indicators:** Changes in `Avg_Feed_Intake_g` and `Avg_Water_Intake_ml` are strong signals, suggesting that monitoring consumption patterns is vital.
+        *   **Demographics:** `Bird_Age_Days` and `Total_Alive_Birds` also play a role, reflecting age-related vulnerabilities and flock density.
+        """
+    )
 
 # --- 4. Prescriptive Intervention Planner ---
 st.divider()
-st.header("🛠️ Prescriptive Intervention Planner")
+st.header("🛠️ Prescriptive Intervention Planner: What can you do?")
+st.markdown(
+    """
+    This powerful tool uses **DiCE (Diverse Counterfactual Explanations)** to suggest minimal, actionable changes
+    that could shift an 'At-Risk' prediction to 'Healthy'. Think of it as a "What if?" scenario planner.
 
-# We allow them to fix either the LATEST risks, or browse historical risks for analysis
+    **How to use it:**
+    1.  **Select an 'At-Risk' record:** Choose a specific instance (e.g., a zone on a particular day) that the AI flagged.
+    2.  **Generate Action Plan:** Click the button to see the suggested changes.
+    3.  **Implement & Monitor:** These changes represent the *most efficient* ways to improve the predicted health status.
+        Implementing them can help prevent actual health issues.
+
+    *Note: Only controllable features (e.g., temperature, humidity, feed/water intake) are suggested for change.*"""
+)
+
 analysis_mode = st.radio("Analysis Mode:", ["Fix Current Risks", "Analyze Historical Risks"])
 
 if analysis_mode == "Fix Current Risks":
-    analysis_df = at_risk_latest
+    analysis_df = latest_day_data.copy() # Use latest_day_data from preprocessing function
+    analysis_preds = model.predict(analysis_df.drop(['Date', 'Target_Health_Status'], axis=1))
+    analysis_df = analysis_df[analysis_preds == 1].drop(['Date', 'Target_Health_Status'], axis=1)
+    if analysis_df.empty: st.info("No current 'At Risk' incidents to analyze for prescriptive interventions.")
 else:
     # All historical at-risk instances in the test set
+    # df_final contains 'Date', so we need to split it again for test block
     train_size = int(len(df_final) * 0.75)
-    test_block = df_final.iloc[train_size:]
-    historical_preds = model.predict(test_block.drop(['Date', 'Target_Health_Status'], axis=1))
-    analysis_df = test_block[historical_preds == 1].drop(['Date', 'Target_Health_Status'], axis=1)
+    test_block_full_df = df_final.iloc[train_size:]
+    X_test_historical = test_block_full_df.drop(['Date', 'Target_Health_Status'], axis=1)
+    y_pred_historical = model.predict(X_test_historical)
+    analysis_df = X_test_historical[y_pred_historical == 1]
+    if analysis_df.empty: st.info("No historical 'At Risk' incidents found in the test set to analyze.")
 
 if not analysis_df.empty:
-    selected_record = st.selectbox("Select a Record to analyze:", analysis_df.index)
-    query = analysis_df.loc[[selected_record]].astype(float)
+    selected_record_index = st.selectbox("Select a Record to analyze for intervention:", analysis_df.index)
+    query = analysis_df.loc[[selected_record_index]].astype(float)
 
     controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
 
@@ -139,6 +179,10 @@ if not analysis_df.empty:
 
     m_dice = dice_ml.Model(model=model, backend='sklearn')
     exp_dice = dice_ml.Dice(d_data, m_dice, method='random')
+
+    st.markdown(f"
+**Analyzing instance (Index: {selected_record_index}):**")
+    st.dataframe(query)
 
     if st.button("Generate Action Plan"):
         with st.spinner("Calculating optimal interventions..."):
@@ -155,19 +199,49 @@ if not analysis_df.empty:
                 for feat in controllable:
                     orig = query[feat].values[0]
                     reco = row[feat]
-                    if abs(orig - reco) > 0.05:
+                    if abs(orig - reco) > 0.05: # Threshold for showing a change
                         changes_found = True
                         direction = "Increase" if reco > orig else "Decrease"
                         st.markdown(f"- {direction} **{feat.replace('_', ' ')}** to **{reco:.1f}**")
 
                 if not changes_found:
-                    st.write("- No simple changes found. Check for disease pathogens.")
+                    st.write("- No significant changes in controllable features found for a quick fix. Consider reviewing other factors like pathogen testing or equipment maintenance.")
 
-            st.subheader("Comparison Table")
-            st.dataframe(res_df)
+            st.subheader("Comparison Table (Original vs. Suggested Actions)")
+            st.dataframe(pd.concat([query, res_df]))
 
 else:
-    st.info("No 'At Risk' incidents found to analyze.")
+    st.info("Select an 'At Risk' incident above to see intervention recommendations.")
 
-st.markdown("---")
+st.markdown("--- ---")
+st.header("📚 Model Performance & Technical Details")
+st.markdown(
+    f"""
+    The underlying Random Forest Classifier model serves as an Early Warning System, predicting **tomorrow's** health status.
+    It was trained on a comprehensive dataset incorporating various environmental and behavioral metrics, including
+    time-series features like 3-day rolling averages and temperature changes, to enhance predictive power and avoid data leakage.
+
+    **Performance on Test Set:**
+    *   **Accuracy:** {accuracy_retrained:.4f} - Overall correctness of predictions.
+    *   **Precision:** {precision_retrained:.4f} - Of all predicted 'At-Risk' cases, how many were actually 'At-Risk'.
+    *   **Recall:** {recall_retrained:.4f} - Of all actual 'At-Risk' cases, how many did we correctly identify.
+    *   **F1-Score:** {f1_retrained:.4f} - A balanced measure of precision and recall.
+
+    These metrics indicate a robust model, particularly strong in identifying actual 'At-Risk' cases (high Recall), crucial for an early warning system.
+    """
+)
+
+st.markdown("--- ---")
+st.subheader("💡 Overall Recommendations & Next Steps")
+st.markdown(
+    """
+    *   **Daily Monitoring:** Regularly check the "Current Risk Alerts" to identify immediate areas of concern.
+    *   **Targeted Interventions:** Utilize the "Prescriptive Intervention Planner" to apply precise changes based on DiCE recommendations.
+    *   **Long-term Strategy:** Analyze global feature importance (SHAP) to understand systemic factors and implement preventative measures across the farm.
+    *   **Data Integration:** Consider integrating this system with real-time sensor data for automated alerts and faster response times.
+    *   **Veterinary Consultation:** Always consult with a veterinarian for definitive diagnoses and treatment plans, especially if interventions don't yield desired results.
+    """
+)
+
+st.markdown("--- --- ---")
 st.caption("Master's Project | Canary Early Warning System | Prescriptive Analytics")
