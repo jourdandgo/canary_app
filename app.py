@@ -15,7 +15,7 @@ from datetime import datetime, timedelta # Needed for preprocessing in Streamlit
 @st.cache_resource
 def load_artifacts():
     # Load the retrained model
-    with open('random_forest_model_retrained.pkl', 'rb') as f:
+    with open('model.pkl', 'rb') as f:
         model = pickle.load(f)
     # Load the retrained X_train (with predictive features)
     with open('X_train_data_retrained.pkl', 'rb') as f:
