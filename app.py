@@ -185,7 +185,7 @@ if at_risk_indices:
         with st.spinner('Generating counterfactuals... This may take a moment.'):
             # Generate counterfactuals targeting 'Healthy' (class 0)
             cf = dice.generate_counterfactuals(query_instance, total_CFs=3, desired_class=0, verbose=False)
-            st.subheader('Counterfactual Explanations (Changes needed for **tomorrow's** prediction to become 'Healthy'):')
+            st.subheader("Counterfactual Explanations (Changes needed for **tomorrow's** prediction to become 'Healthy'):")
             st.write(cf.visualize_as_dataframe(show_only_changes=True))
 else:
     st.warning("No instances predicted as 'At_Risk' in the test set. Cannot generate counterfactuals for future prediction.")
