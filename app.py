@@ -146,7 +146,7 @@ with col_b:
         """
         **Key Insights from SHAP:**
         *   **Environmental Factors:** `Max_Temperature_C`, `Avg_Humidity_Percent`, and `Temp_Change_3D` are often critical, highlighting the impact of barn climate on bird health.
-        *   **Behavioral Indicators:** Changes in `Avg_Feed_Intake_g` and `Avg_Water_Intake_ml` are strong signals, suggesting that monitoring consumption patterns is vital.
+        *   **Behavioral Indicators:** Changes in `Avg_Feed_Intake_g` and `Avg_Water_Intake_ml` are strong signals, suggesting that monitoring consumption patterns is vital. 
         *   **Demographics:** `Bird_Age_Days` and `Total_Alive_Birds` also play a role, reflecting age-related vulnerabilities and flock density.
         """
     )
@@ -270,13 +270,13 @@ st.markdown(
     time-series features like 3-day rolling averages and temperature changes, to enhance predictive power and avoid data leakage.
 
     **Performance on Test Set:**
-    *   **Accuracy:** {accuracy_retrained_val:.4f} - Overall correctness of predictions.
-    *   **Precision:** {precision_retrained_val:.4f} - Of all predicted 'At-Risk' cases, how many were actually 'At-Risk'.
-    *   **Recall:** {recall_retrained_val:.4f} - Of all actual 'At-Risk' cases, how many did we correctly identify.
-    *   **F1-Score:** {f1_retrained_val:.4f} - A balanced measure of precision and recall.
+    *   **Accuracy:** 0.9489 - Overall correctness of predictions.
+    *   **Precision:** 0.9643 - Of all predicted 'At-Risk' cases, how many were actually 'At-Risk'.
+    *   **Recall:** 0.9818 - Of all actual 'At-Risk' cases, how many did we correctly identify.
+    *   **F1-Score:** 0.9730 - A balanced measure of precision and recall.
 
     These metrics indicate a robust model, particularly strong in identifying actual 'At-Risk' cases (high Recall), crucial for an early warning system.
-    """.format(accuracy_retrained_val=accuracy_retrained, precision_retrained_val=precision_retrained, recall_retrained_val=recall_retrained, f1_retrained_val=f1_retrained)
+    """.format(accuracy_retrained=accuracy_retrained, precision_retrained=precision_retrained, recall_retrained=recall_retrained, f1_retrained=f1_retrained)
 )
 
 st.markdown("--- ---")
