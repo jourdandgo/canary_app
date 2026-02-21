@@ -71,11 +71,18 @@ y_full_encoded = label_encoder.transform(df_final['Target_Health_Status'])
 latest_day_data = df_final[df_final['Date'] == latest_date].copy()
 X_latest = latest_day_data.drop(['Date', 'Target_Health_Status'], axis=1)
 
+# Make predictions for the latest day
+preds_latest = model.predict(X_latest)
+latest_day_data['Predicted_Health_Status'] = label_encoder.inverse_transform(preds_latest)
+
+# Filter for 'At_Risk' predictions on the latest day
+at_risk_latest = latest_day_data[latest_day_data['Predicted_Health_Status'] == 'At_Risk']
+
 # --- 3. Dashboard UI ---
 st.title('🐔 Automated Canary: Poultry Health Dashboard')
 st.markdown(
     """
-    Welcome to the **Automated Canary: Poultry Health Dashboard**! This tool provides an early warning system 
+    Welcome to the **Automated Canary: Poultry Health Dashboard**! This tool provides an early warning system
     for broiler chicken health, leveraging AI to predict potential 'At-Risk' statuses *before* they fully develop.
 
     The goal is to empower farm managers with actionable insights, enabling proactive interventions to maintain
@@ -92,15 +99,28 @@ col_a, col_b = st.columns([1, 2])
 
 with col_a:
     st.subheader("⚠️ Current Risk Alerts")
-    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**. This is your first line of defense, providing a heads-up before issues escalate.")
+    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**.
+                 This is your first line of defense, providing a heads-up before issues escalate.")
     if not at_risk_latest.empty:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
         for idx, row in at_risk_latest.iterrows():
-            zone = "Zone_A"
-            for c in zone_cols:
-                if row[c] == 1: zone = c.replace("Zone_ID_", "")
-            st.warning(f"**ALERT:** {zone} is showing early warning signs.")
+            zone = "Zone_A" # Default in case no Zone_ID is set (e.g., if only Zone_A exists and is not one-hot encoded)
+            # Determine the original Zone_ID from one-hot encoded columns
+            # This logic needs to correctly reconstruct the Zone_ID
+            # A better approach is to store the original Zone_ID in latest_day_data before one-hot encoding
+            # For now, let's assume we can derive it from the one-hot columns
+            zones_identified = []
+            if 'Zone_ID_Zone_B' in row and row['Zone_ID_Zone_B'] == 1: zones_identified.append('Zone_B')
+            if 'Zone_ID_Zone_C' in row and row['Zone_ID_Zone_C'] == 1: zones_identified.append('Zone_C')
+            if 'Zone_ID_Zone_D' in row and row['Zone_ID_Zone_D'] == 1: zones_identified.append('Zone_D')
+            
+            if not zones_identified: # If no specific Zone_ID is 1, it must be the base (Zone_A)
+                actual_zone = 'Zone_A'
+            else:
+                actual_zone = zones_identified[0] # Assuming only one zone is active per row
+
+            st.warning(f"**ALERT:** {actual_zone} is showing early warning signs.")
     else:
         st.success("✅ All zones are currently stable for tomorrow's forecast.")
 
@@ -149,10 +169,9 @@ st.markdown(
 analysis_mode = st.radio("Analysis Mode:", ["Fix Current Risks", "Analyze Historical Risks"])
 
 if analysis_mode == "Fix Current Risks":
-    analysis_df = latest_day_data.copy() # Use latest_day_data from preprocessing function
-    analysis_preds = model.predict(analysis_df.drop(['Date', 'Target_Health_Status'], axis=1))
-    analysis_df = analysis_df[analysis_preds == 1].drop(['Date', 'Target_Health_Status'], axis=1)
-    if analysis_df.empty: st.info("No current 'At Risk' incidents to analyze for prescriptive interventions.")
+    # Use at_risk_latest directly for current risks
+    analysis_df_for_selection = at_risk_latest.drop(['Date', 'Predicted_Health_Status', 'Target_Health_Status'], axis=1, errors='ignore').copy()
+    if analysis_df_for_selection.empty: st.info("No current 'At Risk' incidents to analyze for prescriptive interventions.")
 else:
     # All historical at-risk instances in the test set
     # df_final contains 'Date', so we need to split it again for test block
@@ -160,12 +179,36 @@ else:
     test_block_full_df = df_final.iloc[train_size:]
     X_test_historical = test_block_full_df.drop(['Date', 'Target_Health_Status'], axis=1)
     y_pred_historical = model.predict(X_test_historical)
-    analysis_df = X_test_historical[y_pred_historical == 1]
-    if analysis_df.empty: st.info("No historical 'At Risk' incidents found in the test set to analyze.")
+    
+    # Filter for historical 'At_Risk' predictions (class 1)
+    at_risk_historical = test_block_full_df[y_pred_historical == 1].copy()
+    analysis_df_for_selection = at_risk_historical.drop(['Date', 'Target_Health_Status'], axis=1, errors='ignore')
+    if analysis_df_for_selection.empty: st.info("No historical 'At Risk' incidents found in the test set to analyze.")
 
-if not analysis_df.empty:
-    selected_record_index = st.selectbox("Select a Record to analyze for intervention:", analysis_df.index)
-    query = analysis_df.loc[[selected_record_index]].astype(float)
+if not analysis_df_for_selection.empty:
+    # Create a display name for the selectbox that includes zone and other key info
+    display_options = []
+    for idx, row in analysis_df_for_selection.iterrows():
+        zone = "Zone_A" # Default
+        zones_identified = []
+        if 'Zone_ID_Zone_B' in row and row['Zone_ID_Zone_B'] == 1: zones_identified.append('Zone_B')
+        if 'Zone_ID_Zone_C' in row and row['Zone_ID_Zone_C'] == 1: zones_identified.append('Zone_C')
+        if 'Zone_ID_Zone_D' in row and row['Zone_ID_Zone_D'] == 1: zones_identified.append('Zone_D')
+        
+        if not zones_identified: 
+            zone = 'Zone_A'
+        else:
+            zone = zones_identified[0] 
+            
+        display_options.append(f"Zone: {zone}, Age: {int(row['Bird_Age_Days'])}, Temp: {row['Max_Temperature_C']}C")
+
+    # Map display options back to original indices
+    option_to_index = {opt: idx for opt, idx in zip(display_options, analysis_df_for_selection.index)}
+
+    selected_display_option = st.selectbox("Select a Record to analyze for intervention:", display_options)
+    selected_record_index = option_to_index[selected_display_option]
+    
+    query = analysis_df_for_selection.loc[[selected_record_index]].astype(float)
 
     controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
 
@@ -179,7 +222,8 @@ if not analysis_df.empty:
     m_dice = dice_ml.Model(model=model, backend='sklearn')
     exp_dice = dice_ml.Dice(d_data, m_dice, method='random')
 
-    st.markdown(f"**Analyzing instance (Index: {selected_record_index}):**")
+    st.markdown(f"
+**Analyzing instance (Original Index: {selected_record_index}):**")
     st.dataframe(query)
 
     if st.button("Generate Action Plan"):
