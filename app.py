@@ -107,26 +107,24 @@ st.write(
     """
 )
 
-@st.cache_resource
-def get_shap_plot(_model_obj, X_data):
+# 1. We ONLY cache the heavy math (generating the SHAP values)
+@st.cache_data
+def get_shap_values(_model_obj, X_data):
     explainer = shap.TreeExplainer(_model_obj)
-    # SHAP values for tree models typically return 2 arrays for binary classification
-    # [shap_values_for_class_0, shap_values_for_class_1]
     shap_values = explainer.shap_values(X_data)
+    # Extract the SHAP values for the 'At_Risk' class (class 1)
+    return shap_values[:, :, 1]
 
-    # We need to extract the SHAP values for the 'At_Risk' class (class 1).
-    # This means taking the second element from the list of SHAP value arrays.
-    # Corrected slicing for 3D shap_values output to get (n_samples, n_features)
-    shap_values_for_at_risk_class = shap_values[:, :, 1]
+shap_values_for_at_risk_class = get_shap_values(model, X_train)
 
-    plt.figure(figsize=(10, 6))
-    shap.summary_plot(shap_values_for_at_risk_class, X_data, plot_type="bar", show=False)
-    plt.title('Global Feature Importance (SHAP values for "At_Risk" class)')
-    plt.tight_layout()
-    return plt
+# 2. We draw the plot OUTSIDE the cache using a specific Figure object (fig)
+fig, ax = plt.subplots(figsize=(10, 6))
+shap.summary_plot(shap_values_for_at_risk_class, X_train, plot_type="bar", show=False)
+plt.title('Global Feature Importance (SHAP values for "At_Risk" class)')
+plt.tight_layout()
 
-shap_plot = get_shap_plot(model, X_train) # Using X_train for global plot as it represents the overall data distribution
-st.pyplot(shap_plot)
+# Render the specific figure in Streamlit
+st.pyplot(fig)
 
 # --- 4. Counterfactual Explanations (DICE) ---
 st.header('Counterfactual Explanations')
