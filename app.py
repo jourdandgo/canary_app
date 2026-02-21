@@ -43,7 +43,7 @@ def call_gemini_with_retry(prompt):
 @st.cache_resource
 def load_artifacts():
     try:
-        with open('random_forest_model_retrained.pkl', 'rb') as f:
+        with open('model.pkl', 'rb') as f:
             model = pickle.load(f)
         with open('X_train_data_retrained.pkl', 'rb') as f:
             X_train_data = pickle.load(f)
