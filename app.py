@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,7 +15,7 @@ st.set_page_config(page_title="Canary Early Warning Dashboard", layout="wide")
 # --- 1. Load Artifacts ---
 @st.cache_resource
 def load_artifacts():
-    with open('model.pkl', 'rb') as f:
+    with open('random_forest_model_retrained.pkl', 'rb') as f:
         model = pickle.load(f)
     with open('X_train_data_retrained.pkl', 'rb') as f:
         X_train_data = pickle.load(f)
@@ -45,15 +46,15 @@ def get_processed_data(_label_encoder):
 
     # Shift Target
     df['Target_Health_Status'] = df.groupby('Zone_ID')['Health_Status'].shift(-1)
-    
+
     # We keep the Date and Target for a moment to filter
     df_processed = df.dropna().copy()
 
     # One-Hot Encoding for Zone IDs
     df_encoded = pd.get_dummies(df_processed, columns=['Zone_ID'], drop_first=True, dtype=int)
-    
+
     # Remove features that leak "current" health
-    leakage = ['Health_Status', 'Daily_Mortality_Count', 'Daily_Mortality_Rate_Pct', 
+    leakage = ['Health_Status', 'Daily_Mortality_Count', 'Daily_Mortality_Rate_Pct',
                'Panting_Percent', 'Huddling_Percent', 'Wing_Spreading_Percent', 'Droppings_Abnormality_Score']
     df_encoded = df_encoded.drop(columns=leakage, errors='ignore')
 
@@ -86,7 +87,7 @@ with col_a:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
         for idx, row in at_risk_latest.iterrows():
-            zone = "Zone_A" 
+            zone = "Zone_A"
             for c in zone_cols:
                 if row[c] == 1: zone = c.replace("Zone_ID_", "")
             st.warning(f"**ALERT:** {zone} is showing early warning signs.")
@@ -126,28 +127,28 @@ else:
 if not analysis_df.empty:
     selected_record = st.selectbox("Select a Record to analyze:", analysis_df.index)
     query = analysis_df.loc[[selected_record]].astype(float)
-    
+
     controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
-    
+
     # Setup DiCE
     dice_data_df = pd.concat([X_full.astype(float), pd.Series(y_full_encoded, name='Target_Health_Status', index=df_final.index)], axis=1)
-    d_data = dice_ml.Data(dataframe=dice_data_df, 
+    d_data = dice_ml.Data(dataframe=dice_data_df,
                           continuous_features=[c for c in X_full.columns if 'Zone_ID' not in c],
                           categorical_features=[c for c in X_full.columns if 'Zone_ID' in c],
                           outcome_name='Target_Health_Status')
-    
+
     m_dice = dice_ml.Model(model=model, backend='sklearn')
     exp_dice = dice_ml.Dice(d_data, m_dice, method='random')
 
     if st.button("Generate Action Plan"):
         with st.spinner("Calculating optimal interventions..."):
-            cf = exp_dice.generate_counterfactuals(query, total_CFs=2, 
-                                                   desired_class=0, 
+            cf = exp_dice.generate_counterfactuals(query, total_CFs=2,
+                                                   desired_class=0,
                                                    features_to_vary=controllable)
-            
+
             st.markdown("#### ✅ Recommended Recovery Strategy")
             res_df = cf.cf_examples_list[0].final_cfs_df
-            
+
             for i, row in res_df.iterrows():
                 st.write(f"**Option {i+1}:**")
                 changes_found = False
@@ -158,10 +159,10 @@ if not analysis_df.empty:
                         changes_found = True
                         direction = "Increase" if reco > orig else "Decrease"
                         st.markdown(f"- {direction} **{feat.replace('_', ' ')}** to **{reco:.1f}**")
-                
+
                 if not changes_found:
                     st.write("- No simple changes found. Check for disease pathogens.")
-            
+
             st.subheader("Comparison Table")
             st.dataframe(res_df)
 
