@@ -99,7 +99,8 @@ col_a, col_b = st.columns([1, 2])
 
 with col_a:
     st.subheader("⚠️ Current Risk Alerts")
-    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**. This is your first line of defense, providing a heads-up before issues escalate.")
+    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**.
+                 This is your first line of defense, providing a heads-up before issues escalate.")
     if not at_risk_latest.empty:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
@@ -113,7 +114,7 @@ with col_a:
             if 'Zone_ID_Zone_B' in row and row['Zone_ID_Zone_B'] == 1: zones_identified.append('Zone_B')
             if 'Zone_ID_Zone_C' in row and row['Zone_ID_Zone_C'] == 1: zones_identified.append('Zone_C')
             if 'Zone_ID_Zone_D' in row and row['Zone_ID_Zone_D'] == 1: zones_identified.append('Zone_D')
-            
+
             if not zones_identified: # If no specific Zone_ID is 1, it must be the base (Zone_A)
                 actual_zone = 'Zone_A'
             else:
@@ -178,7 +179,7 @@ else:
     test_block_full_df = df_final.iloc[train_size:]
     X_test_historical = test_block_full_df.drop(['Date', 'Target_Health_Status'], axis=1)
     y_pred_historical = model.predict(X_test_historical)
-    
+
     # Filter for historical 'At_Risk' predictions (class 1)
     at_risk_historical = test_block_full_df[y_pred_historical == 1].copy()
     analysis_df_for_selection = at_risk_historical.drop(['Date', 'Target_Health_Status'], axis=1, errors='ignore')
@@ -193,12 +194,12 @@ if not analysis_df_for_selection.empty:
         if 'Zone_ID_Zone_B' in row and row['Zone_ID_Zone_B'] == 1: zones_identified.append('Zone_B')
         if 'Zone_ID_Zone_C' in row and row['Zone_ID_Zone_C'] == 1: zones_identified.append('Zone_C')
         if 'Zone_ID_Zone_D' in row and row['Zone_ID_Zone_D'] == 1: zones_identified.append('Zone_D')
-        
-        if not zones_identified: 
+
+        if not zones_identified:
             zone = 'Zone_A'
         else:
-            zone = zones_identified[0] 
-            
+            zone = zones_identified[0]
+
         display_options.append(f"Zone: {zone}, Age: {int(row['Bird_Age_Days'])}, Temp: {row['Max_Temperature_C']}C")
 
     # Map display options back to original indices
@@ -206,7 +207,7 @@ if not analysis_df_for_selection.empty:
 
     selected_display_option = st.selectbox("Select a Record to analyze for intervention:", display_options)
     selected_record_index = option_to_index[selected_display_option]
-    
+
     query = analysis_df_for_selection.loc[[selected_record_index]].astype(float)
 
     controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
@@ -256,19 +257,19 @@ else:
 st.markdown("--- ---")
 st.header("📚 Model Performance & Technical Details")
 st.markdown(
-    f"""
+    """
     The underlying Random Forest Classifier model serves as an Early Warning System, predicting **tomorrow's** health status.
     It was trained on a comprehensive dataset incorporating various environmental and behavioral metrics, including
     time-series features like 3-day rolling averages and temperature changes, to enhance predictive power and avoid data leakage.
 
     **Performance on Test Set:**
-    *   **Accuracy:** {accuracy_retrained:.4f} - Overall correctness of predictions.
-    *   **Precision:** {precision_retrained:.4f} - Of all predicted 'At-Risk' cases, how many were actually 'At-Risk'.
-    *   **Recall:** {recall_retrained:.4f} - Of all actual 'At-Risk' cases, how many did we correctly identify.
-    *   **F1-Score:** {f1_retrained:.4f} - A balanced measure of precision and recall.
+    *   **Accuracy:** {accuracy_retrained_val:.4f} - Overall correctness of predictions.
+    *   **Precision:** {precision_retrained_val:.4f} - Of all predicted 'At-Risk' cases, how many were actually 'At-Risk'.
+    *   **Recall:** {recall_retrained_val:.4f} - Of all actual 'At-Risk' cases, how many did we correctly identify.
+    *   **F1-Score:** {f1_retrained_val:.4f} - A balanced measure of precision and recall.
 
     These metrics indicate a robust model, particularly strong in identifying actual 'At-Risk' cases (high Recall), crucial for an early warning system.
-    """
+    """.format(accuracy_retrained_val=accuracy_retrained, precision_retrained_val=precision_retrained, recall_retrained_val=recall_retrained, f1_retrained_val=f1_retrained)
 )
 
 st.markdown("--- ---")
