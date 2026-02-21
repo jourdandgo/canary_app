@@ -14,7 +14,7 @@ st.set_page_config(page_title="Canary Early Warning Dashboard", layout="wide")
 # --- 1. Load Artifacts ---
 @st.cache_resource
 def load_artifacts():
-    with open('model.pkl', 'rb') as f:
+    with open('random_forest_model_retrained.pkl', 'rb') as f:
         model = pickle.load(f)
     with open('X_train_data_retrained.pkl', 'rb') as f:
         X_train_data = pickle.load(f)
@@ -25,14 +25,16 @@ def load_artifacts():
 model, X_train, label_encoder = load_artifacts()
 
 # --- 2. Data Preprocessing (Predictive Logic) ---
-# We use the underscore _label_encoder to prevent Streamlit hashing errors
 @st.cache_data
 def get_processed_data(_label_encoder):
     df = pd.read_csv('broiler_health_noisy_dataset.csv')
     df['Date'] = pd.to_datetime(df['Date'])
     df = df.sort_values(by=['Zone_ID', 'Date']).reset_index(drop=True)
 
-    # Feature Engineering (Must match the notebook exactly)
+    # Store the dates before dropping them so we can filter by 'Latest'
+    df_with_dates = df.copy()
+
+    # Feature Engineering
     df['DayOfMonth'] = df['Date'].dt.day
     df['DayOfWeek'] = df['Date'].dt.dayofweek
     df['Temp_Avg_3D'] = df.groupby('Zone_ID')['Max_Temperature_C'].transform(lambda x: x.rolling(3, min_periods=1).mean())
@@ -41,80 +43,94 @@ def get_processed_data(_label_encoder):
     df['Mortality_Rate_Avg_3D'] = df.groupby('Zone_ID')['Daily_Mortality_Rate_Pct'].transform(lambda x: x.rolling(3, min_periods=1).mean())
     df['Temp_Change_3D'] = df.groupby('Zone_ID')['Max_Temperature_C'].diff(periods=3).fillna(0)
 
-    # Shift Target to predict TOMORROW'S health using TODAY'S data
+    # Shift Target
     df['Target_Health_Status'] = df.groupby('Zone_ID')['Health_Status'].shift(-1)
-    df = df.drop('Date', axis=1).dropna()
+    
+    # We keep the Date and Target for a moment to filter
+    df_processed = df.dropna().copy()
 
     # One-Hot Encoding for Zone IDs
-    df = pd.get_dummies(df, columns=['Zone_ID'], drop_first=True, dtype=int)
+    df_encoded = pd.get_dummies(df_processed, columns=['Zone_ID'], drop_first=True, dtype=int)
     
-    # Remove features that leak "current" health (behavioral metrics)
+    # Remove features that leak "current" health
     leakage = ['Health_Status', 'Daily_Mortality_Count', 'Daily_Mortality_Rate_Pct', 
                'Panting_Percent', 'Huddling_Percent', 'Wing_Spreading_Percent', 'Droppings_Abnormality_Score']
-    df = df.drop(columns=leakage, errors='ignore')
+    df_encoded = df_encoded.drop(columns=leakage, errors='ignore')
 
-    X = df.drop('Target_Health_Status', axis=1)
-    y_encoded = _label_encoder.transform(df['Target_Health_Status'])
+    return df_encoded
 
-    return X, y_encoded
+df_final = get_processed_data(label_encoder)
 
-X_full, y_full_encoded = get_processed_data(label_encoder)
+# --- NEW LOGIC: Filter for ONLY the latest data point per zone ---
+latest_date = df_final['Date'].max()
+X_full = df_final.drop(['Date', 'Target_Health_Status'], axis=1)
+y_full_encoded = label_encoder.transform(df_final['Target_Health_Status'])
 
-# Create Test Set for display (last 25% of data)
-train_size = int(len(X_full) * 0.75)
-X_test = X_full.iloc[train_size:]
+# This is what we show in the "Alerts" - only things happening on the most recent day
+latest_day_data = df_final[df_final['Date'] == latest_date].copy()
+X_latest = latest_day_data.drop(['Date', 'Target_Health_Status'], axis=1)
 
 # --- 3. Dashboard UI ---
 st.title('🐔 Automated Canary: Poultry Health Dashboard')
-st.markdown("### Early Warning System & Prescriptive Intervention Planner")
+st.markdown(f"### Monitoring Status for: **{latest_date.strftime('%Y-%m-%d')}**")
 
-# Run Global Predictions
-preds = model.predict(X_test)
-at_risk_df = X_test[preds == 1].copy()
+# Run Predictions for the latest day only
+latest_preds = model.predict(X_latest)
+at_risk_latest = X_latest[latest_preds == 1].copy()
 
 col_a, col_b = st.columns([1, 2])
 
 with col_a:
-    st.subheader("⚠️ Prediction Alerts")
-    if not at_risk_df.empty:
-        st.error(f"Found {len(at_risk_df)} zones predicted 'At Risk' for tomorrow.")
-        zone_cols = [c for c in at_risk_df.columns if 'Zone_ID' in c]
-        for idx, row in at_risk_df.head(5).iterrows():
-            zone = "Zone_A" # Default if other dummies are 0
+    st.subheader("⚠️ Current Risk Alerts")
+    if not at_risk_latest.empty:
+        st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
+        zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
+        for idx, row in at_risk_latest.iterrows():
+            zone = "Zone_A" 
             for c in zone_cols:
                 if row[c] == 1: zone = c.replace("Zone_ID_", "")
-            st.warning(f"**Alert:** {zone} (Record ID: {idx})")
+            st.warning(f"**ALERT:** {zone} is showing early warning signs.")
     else:
-        st.success("✅ All zones predicted 'Healthy' for tomorrow.")
+        st.success("✅ All zones are currently stable for tomorrow's forecast.")
 
 with col_b:
-    # SHAP Feature Importance
+    # SHAP Feature Importance (Using X_train for global context)
     @st.cache_data
     def get_shap_vals(_model, X_data):
         explainer = shap.TreeExplainer(_model)
         return explainer.shap_values(X_data)[:, :, 1]
 
-    st.subheader("📊 Primary Risk Drivers (Global)")
+    st.subheader("📊 Why does the AI flag risk?")
     s_vals = get_shap_vals(model, X_train)
     fig, ax = plt.subplots(figsize=(10, 5))
     shap.summary_plot(s_vals, X_train, plot_type="bar", show=False)
     plt.tight_layout()
     st.pyplot(fig)
 
-# --- 4. Prescriptive Intervention Planner (DiCE) ---
+# --- 4. Prescriptive Intervention Planner ---
 st.divider()
 st.header("🛠️ Prescriptive Intervention Planner")
-st.info("The AI identifies controllable environmental factors to return 'At Risk' zones to health.")
 
-if not at_risk_df.empty:
-    selected_record = st.selectbox("Select an 'At Risk' Record to Analyze:", at_risk_df.index)
-    query = X_test.loc[[selected_record]].astype(float)
+# We allow them to fix either the LATEST risks, or browse historical risks for analysis
+analysis_mode = st.radio("Analysis Mode:", ["Fix Current Risks", "Analyze Historical Risks"])
+
+if analysis_mode == "Fix Current Risks":
+    analysis_df = at_risk_latest
+else:
+    # All historical at-risk instances in the test set
+    train_size = int(len(df_final) * 0.75)
+    test_block = df_final.iloc[train_size:]
+    historical_preds = model.predict(test_block.drop(['Date', 'Target_Health_Status'], axis=1))
+    analysis_df = test_block[historical_preds == 1].drop(['Date', 'Target_Health_Status'], axis=1)
+
+if not analysis_df.empty:
+    selected_record = st.selectbox("Select a Record to analyze:", analysis_df.index)
+    query = analysis_df.loc[[selected_record]].astype(float)
     
-    # Farmers can only control these 4 things
     controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
     
     # Setup DiCE
-    dice_data_df = pd.concat([X_full.astype(float), pd.Series(y_full_encoded, name='Target_Health_Status', index=X_full.index)], axis=1)
+    dice_data_df = pd.concat([X_full.astype(float), pd.Series(y_full_encoded, name='Target_Health_Status', index=df_final.index)], axis=1)
     d_data = dice_ml.Data(dataframe=dice_data_df, 
                           continuous_features=[c for c in X_full.columns if 'Zone_ID' not in c],
                           categorical_features=[c for c in X_full.columns if 'Zone_ID' in c],
@@ -123,38 +139,34 @@ if not at_risk_df.empty:
     m_dice = dice_ml.Model(model=model, backend='sklearn')
     exp_dice = dice_ml.Dice(d_data, m_dice, method='random')
 
-    if st.button("Generate Actionable Recommendations"):
+    if st.button("Generate Action Plan"):
         with st.spinner("Calculating optimal interventions..."):
-            # We tell the AI to ONLY vary the controllable features
             cf = exp_dice.generate_counterfactuals(query, total_CFs=2, 
                                                    desired_class=0, 
                                                    features_to_vary=controllable)
             
-            st.markdown("#### ✅ Recommended Environmental Adjustments")
+            st.markdown("#### ✅ Recommended Recovery Strategy")
             res_df = cf.cf_examples_list[0].final_cfs_df
             
-            # Actionable Text logic
             for i, row in res_df.iterrows():
-                st.write(f"**Intervention Strategy {i+1}:**")
+                st.write(f"**Option {i+1}:**")
                 changes_found = False
                 for feat in controllable:
                     orig = query[feat].values[0]
                     reco = row[feat]
-                    
                     if abs(orig - reco) > 0.05:
                         changes_found = True
                         direction = "Increase" if reco > orig else "Decrease"
-                        label = feat.replace('_', ' ')
-                        st.markdown(f"- {direction} **{label}** from {orig:.1f} to **{reco:.1f}**")
+                        st.markdown(f"- {direction} **{feat.replace('_', ' ')}** to **{reco:.1f}**")
                 
                 if not changes_found:
-                    st.write("- No simple environmental changes identified. Check bird health manually.")
+                    st.write("- No simple changes found. Check for disease pathogens.")
             
-            st.subheader("Data Comparison Table")
-            st.dataframe(res_df.style.highlight_max(axis=0, color='#1b5e20'))
+            st.subheader("Comparison Table")
+            st.dataframe(res_df)
 
 else:
-    st.write("No 'At Risk' incidents predicted. The flock is currently stable.")
+    st.info("No 'At Risk' incidents found to analyze.")
 
 st.markdown("---")
-st.caption("Master's Thesis | Poultry Health Monitoring System | Explainable & Prescriptive AI")
+st.caption("Master's Project | Canary Early Warning System | Prescriptive Analytics")
