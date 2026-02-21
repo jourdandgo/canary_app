@@ -102,8 +102,7 @@ col_a, col_b = st.columns([1, 2])
 
 with col_a:
     st.subheader("⚠️ Current Risk Alerts")
-    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**.
-                 This is your first line of defense, providing a heads-up before issues escalate.")
+    st.markdown("Here, you'll see immediate alerts for any zones predicted to be 'At-Risk' for **tomorrow**. This is your first line of defense, providing a heads-up before issues escalate.")
     if not at_risk_latest.empty:
         st.error(f"Action Required: {len(at_risk_latest)} zones are at risk for TOMORROW.")
         zone_cols = [c for c in at_risk_latest.columns if 'Zone_ID' in c]
