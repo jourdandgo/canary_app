@@ -156,7 +156,7 @@ if at_risk_indices:
     for col in query_instance.select_dtypes(include=['number']).columns:
         query_instance[col] = query_instance[col].astype(float)
 
-    st.subheader(f'Selected Instance (Index: {selected_index}, Predicted 'At_Risk' for tomorrow):')
+    st.subheader(f"Selected Instance (Index: {selected_index}, Predicted 'At_Risk' for tomorrow):")
     st.dataframe(query_instance)
 
     # Recreate DICE objects (need to ensure feature types are correctly passed)
