@@ -58,9 +58,19 @@ def get_dashboard_data(_label_encoder, _expected_cols):
     df['Water_Avg_3D'] = df.groupby('Zone_ID')['Avg_Water_Intake_ml'].transform(lambda x: x.rolling(3).mean())
     df['Temp_Change_3D'] = df.groupby('Zone_ID')['Max_Temperature_C'].diff(periods=3).fillna(0)
     df['Target_Status'] = df.groupby('Zone_ID')['Health_Status'].shift(-1)
-    df_encoded = pd.get_dummies(df, columns=['Zone_ID'], drop_first=True, dtype=int)
-    df_encoded = df_encoded.reindex(columns=['Date', 'Target_Status'] + list(_expected_cols), fill_value=0)
-    return df_encoded.dropna(subset=['Target_Status']).copy(), df_encoded[df_encoded['Target_Status'].isna()].copy()
+    
+    # We create a dummy version for the model, but we must keep Zone_ID for matching logic
+    df_dummies = pd.get_dummies(df, columns=['Zone_ID'], drop_first=True, dtype=int)
+    
+    # Align model features while keeping 'Date' and 'Target_Status' for splitting
+    model_ready = df_dummies.reindex(columns=['Date', 'Target_Status'] + list(_expected_cols), fill_value=0)
+    
+    # Also keep the original columns like Zone_ID and Total_Alive_Birds for display
+    # We do this by concat-ing only the display columns back or just re-merging
+    display_cols = df[['Date', 'Zone_ID', 'Total_Alive_Birds', 'Bird_Age_Days', 'Health_Status']]
+    final_df = pd.concat([model_ready, display_cols.drop(columns=['Date'])], axis=1)
+    
+    return final_df.dropna(subset=['Target_Status']).copy(), final_df[final_df['Target_Status'].isna()].copy()
 
 df_hist, df_live = get_dashboard_data(label_encoder, X_train.columns)
 
@@ -73,8 +83,8 @@ with st.expander("📖 STRATEGIC GUIDE: How to use this system to protect your f
     with col1:
         st.markdown("**The Problem: We detect sickness too late.**")
         st.write("In broiler houses, respiratory and heat issues spread overnight. By the time a bird looks sick, the damage is done. Mortality is inevitable.")
-        st.markdown("**What is the Risk Score?**")
-        st.write("This score is a **Crisis Probability**. If a zone shows 90%, it means the current environmental pattern matches historical cases that led to mass mortality 90% of the time. It is a 24-hour warning.")
+        st.markdown("**What is the Crisis Probability?**")
+        st.write("This score is a mathematical forecast. If a zone shows 90%, it means the current environmental pattern matches historical cases that led to mass mortality 90% of the time. It is a 24-hour warning.")
     with col2:
         st.markdown("**The Solution: Biological Lead Indicators**")
         st.write("This AI monitors sensors for **Tomorrow's Forecast**. It identifies drops in appetite and rising heat history *today* so you can fix the environment *before* mortality occurs.")
@@ -83,18 +93,28 @@ with st.expander("📖 STRATEGIC GUIDE: How to use this system to protect your f
 latest_date = df_live['Date'].max()
 st.subheader(f"🌐 Fleet Health Forecast for Tomorrow: { (latest_date + timedelta(days=1)).strftime('%B %d, %Y') }")
 
-X_live = df_live.drop(['Date', 'Target_Status'], axis=1)
+# Select only features used in training for the model
+X_live = df_live[list(X_train.columns)]
 probs_live = model.predict_proba(X_live)[:, 1]
 
 cols = st.columns(4)
 zone_names = ["Zone_A", "Zone_B", "Zone_C", "Zone_D"]
+
+# Map probabilities back to Zone IDs correctly
+zone_risk_map = {}
+for i in range(len(df_live)):
+    z_id = df_live.iloc[i]['Zone_ID']
+    zone_risk_map[z_id] = {'prob': probs_live[i], 'birds': int(df_live.iloc[i]['Total_Alive_Birds'])}
+
 for i, zone in enumerate(zone_names):
-    p = probs_live[i]
-    birds = int(X_live.iloc[i]['Total_Alive_Birds'])
-    # Assume $4 per bird valuation
-    val_at_risk = birds * 4.0 * p
-    color = "#ef4444" if p > 0.7 else ("#f59e0b" if p > 0.4 else "#22c55e")
-    label = "🚨 CRITICAL" if p > 0.7 else ("⚠️ WARNING" if p > 0.4 else "✅ STABLE")
+    if zone in zone_risk_map:
+        p = zone_risk_map[zone]['prob']
+        birds = zone_risk_map[zone]['birds']
+        val_at_risk = birds * 4.0 * p
+        color = "#ef4444" if p > 0.7 else ("#f59e0b" if p > 0.4 else "#22c55e")
+        label = "🚨 CRITICAL" if p > 0.7 else ("⚠️ WARNING" if p > 0.4 else "✅ STABLE")
+    else:
+        p, birds, val_at_risk, color, label = 0.0, 0, 0, "#94a3b8", "NO DATA"
     
     with cols[i]:
         st.markdown(f"""
@@ -114,14 +134,14 @@ st.sidebar.header("🛠️ Diagnostic Simulator")
 st.sidebar.info("Adjust today's sensors manually to test recovery strategies.")
 sel_zone_name = st.sidebar.selectbox("Select Zone for Analysis:", zone_names)
 
-zone_map = {"Zone_B": "Zone_ID_Zone_B", "Zone_C": "Zone_ID_Zone_C", "Zone_D": "Zone_ID_Zone_D"}
-if sel_zone_name == "Zone_A": q_row = df_live[(df_live.filter(like="Zone_ID_").sum(axis=1) == 0)]
-else: q_row = df_live[df_live[zone_map[sel_zone_name]] == 1]
+# Filter live data for the selected zone
+q_row = df_live[df_live['Zone_ID'] == sel_zone_name]
 
 if not q_row.empty:
-    orig_input = X_live.loc[[q_row.index[0]]].copy()
-    age = int(orig_input['Bird_Age_Days'].iloc[0])
-    birds_count = int(orig_input['Total_Alive_Birds'].iloc[0])
+    # Get only the features the model expects
+    orig_input = q_row[list(X_train.columns)].copy()
+    age = int(q_row['Bird_Age_Days'].iloc[0])
+    birds_count = int(q_row['Total_Alive_Birds'].iloc[0])
     
     # Calculate Biological Targets for UI
     target_f = (age * 4.8) + 20
@@ -138,6 +158,7 @@ if not q_row.empty:
     sim_row = orig_input.copy()
     sim_row['Max_Temperature_C'], sim_row['Avg_Humidity_Percent'] = s_temp, s_hum
     sim_row['Avg_Water_Intake_ml'], sim_row['Avg_Feed_Intake_g'] = s_water, s_feed
+    
     sim_prob = model.predict_proba(sim_row.astype(float))[0][1]
     orig_prob = model.predict_proba(orig_input.astype(float))[0][1]
 
@@ -147,11 +168,10 @@ if not q_row.empty:
         st.write("Forecasted risk if you intervene now:")
         st.metric("Future Risk Score", f"{sim_prob:.1%}", delta=f"{sim_prob - orig_prob:.1%}", delta_color="inverse")
         st.progress(sim_prob)
-        st.write(f"**Intervention Guide:** Moving your sensors toward the **Age {age} Targets** reduces the risk score.")
+        st.write(f"**Intervention Guide:** Moving your sensors toward the **Age {age} Targets** reduces the crisis probability.")
 
     with col_shap:
         st.subheader(f"📊 Root Cause Diagnosis: {sel_zone_name}")
-        # FIXED SHAP indexing logic
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(orig_input)
         if isinstance(shap_values, list): sv = shap_values[1]
@@ -188,20 +208,20 @@ if not q_row.empty:
 
     with tab_dice:
         st.markdown("**Mathematical Recovery Path:** Smallest sensor changes needed today to reset tomorrow's forecast.")
-        # Filter for high risk zones only for the prescriptive planner
-        at_risk_list = [zone_names[i] for i, p in enumerate(probs_live) if p > 0.4]
+        # Filter for high risk zones only
+        at_risk_list = [z for z, data in zone_risk_map.items() if data['prob'] > 0.4]
         if at_risk_list:
             target_focus = st.selectbox("Select critical incident to prescribe for:", at_risk_list)
-            if target_focus == "Zone_A": d_query = df_live[(df_live.filter(like="Zone_ID_").sum(axis=1) == 0)]
-            else: d_query = df_live[df_live[zone_map[target_focus]] == 1]
+            d_query = df_live[df_live['Zone_ID'] == target_focus][list(X_train.columns)].astype(float)
             
             controllable = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Water_Intake_ml', 'Avg_Feed_Intake_g']
             try:
-                X_hist_clean = df_hist.drop(['Date', 'Target_Status'], axis=1)
-                dice_data = dice_ml.Data(dataframe=pd.concat([X_hist_clean.astype(float), pd.Series(label_encoder.transform(df_hist['Target_Status']), name='Target_Status', index=X_hist_clean.index)], axis=1), continuous_features=[c for c in X_hist_clean.columns if 'Zone_ID' not in c], categorical_features=[c for c in X_hist_clean.columns if 'Zone_ID' in c], outcome_name='Target_Status')
+                X_hist_clean = df_hist[list(X_train.columns)]
+                y_hist_clean = label_encoder.transform(df_hist['Target_Status'])
+                dice_data = dice_ml.Data(dataframe=pd.concat([X_hist_clean.astype(float), pd.Series(y_hist_clean, name='Target_Status', index=X_hist_clean.index)], axis=1), continuous_features=[c for c in X_hist_clean.columns if 'Zone_ID' not in c], categorical_features=[c for c in X_hist_clean.columns if 'Zone_ID' in c], outcome_name='Target_Status')
                 exp_dice = dice_ml.Dice(dice_data, dice_ml.Model(model=model, backend='sklearn'), method='random')
                 with st.spinner("Finding optimal path to health..."):
-                    cf = exp_dice.generate_counterfactuals(d_query.drop(['Date', 'Target_Status'], axis=1).astype(float), total_CFs=2, desired_class=0, features_to_vary=controllable)
+                    cf = exp_dice.generate_counterfactuals(d_query, total_CFs=2, desired_class=0, features_to_vary=controllable)
                     st.dataframe(cf.cf_examples_list[0].final_cfs_df.style.highlight_max(axis=0, color="#1e3a1e"))
             except:
                 st.warning("Computational Limit: Could not find a mathematical flip for this case. Consult the Strategic Advisor.")
