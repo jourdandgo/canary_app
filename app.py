@@ -92,11 +92,25 @@ with st.expander("📖 STRATEGIC GUIDE: How to use this system to protect your f
     with col1:
         st.markdown("**The Problem: We detect sickness too late.**")
         st.write("In broiler houses, respiratory and heat issues spread overnight. By the time a bird looks sick, the damage is done. Mortality is inevitable.")
-        st.markdown("**What is the Crisis Probability?**")
-        st.write("This score is a mathematical forecast. If a zone shows 90%, it means the current environmental pattern matches historical cases that led to mass mortality 90% of the time. It is a 24-hour warning.")
+        st.markdown("**What is the Pattern Match Score?**")
+        st.write("This AI compares your current intake pattern (feed, water, temperature) against HISTORICAL cases. A 99% match means your situation mirrors cases that historically led to health transitions 99% of the time. It's NOT a mortality rate—it's a biometric signature match.")
+        st.markdown("**How to read it:**")
+        st.markdown("""
+        - **≥99% Match**: Your birds match a state that historically precedes health challenges. NOT guaranteed crisis, but WATCH intake closely.
+        - **80-99% Match**: High historical correlation. Stack management interventions.
+        - **<80% Match**: Pattern less aligned with at-risk cases. But still validate intake targets below.
+        """)
     with col2:
         st.markdown("**The Solution: Biological Lead Indicators**")
         st.write("This AI monitors sensors for **Tomorrow's Forecast**. It identifies drops in appetite and rising heat history *today* so you can fix the environment *before* mortality occurs.")
+        st.markdown("**Your Action Plan:**")
+        st.markdown("""
+        1. **Check the Appetite Gap** (below): Are you 95%+ of biological targets?
+        2. **If YES**: You're safe. Monitor the 3-day rolling trends.
+        3. **If NO**: Adjust ventilation, feed delivery, water pressure TODAY.
+        4. **Run What-If** (in diagnostic zone): See how closing the gap reduces pattern match.
+        """)
+        st.info("💡 **Biological Truth**: Birds eating 100%+ of age-based targets almost NEVER fail. An intake of 95%+ is safe margin.")
 
 # --- 4. Fleet Triage Area ---
 latest_date = df_live['Date'].max()
@@ -110,33 +124,125 @@ probs_live = model.predict_proba(X_live)[:, 1]
 cols = st.columns(4)
 zone_names = ["Zone_A", "Zone_B", "Zone_C", "Zone_D"]
 
-# Correct mapping for triage cards
+# Correct mapping for triage cards WITH BIOLOGICAL TARGETS
 zone_risk_map = {}
 for i in range(len(df_live)):
     z_id = df_live.iloc[i]['Zone_ID']
-    zone_risk_map[z_id] = {'prob': probs_live[i], 'birds': int(df_live.iloc[i]['Total_Alive_Birds'])}
+    age = int(df_live.iloc[i]['Bird_Age_Days'])
+    target_feed = (age * 4.8) + 20
+    target_water = target_feed * 2.1
+    actual_feed = float(df_live.iloc[i]['Avg_Feed_Intake_g'])
+    actual_water = float(df_live.iloc[i]['Avg_Water_Intake_ml'])
+    
+    # Appetite Gap: how far below target are we?
+    feed_gap_pct = (actual_feed - target_feed) / target_feed if target_feed > 0 else 0
+    water_gap_pct = (actual_water - target_water) / target_water if target_water > 0 else 0
+    
+    zone_risk_map[z_id] = {
+        'prob': probs_live[i],
+        'birds': int(df_live.iloc[i]['Total_Alive_Birds']),
+        'age': age,
+        'feed_gap': feed_gap_pct,
+        'water_gap': water_gap_pct,
+        'actual_feed': actual_feed,
+        'target_feed': target_feed,
+        'actual_water': actual_water,
+        'target_water': target_water
+    }
 
 for i, zone in enumerate(zone_names):
     if zone in zone_risk_map:
-        p = zone_risk_map[zone]['prob']
-        birds = zone_risk_map[zone]['birds']
+        data = zone_risk_map[zone]
+        p = data['prob']
+        birds = data['birds']
         val_at_risk = birds * 4.0 * p
-        color = "#ef4444" if p > 0.7 else ("#f59e0b" if p > 0.4 else "#22c55e")
-        label = "🚨 CRITICAL" if p > 0.7 else ("⚠️ WARNING" if p > 0.4 else "✅ STABLE")
+        
+        # NEW LOGIC: Risk stratification based on appetite gap + model probability
+        # If intake is ABOVE target, lower the effective risk; if BELOW, amplify it
+        appetite_severity = max(data['feed_gap'], data['water_gap'])  # More negative = worse
+        
+        # Adjusted risk: model prob + appetite gap penalty
+        if appetite_severity < -0.1:  # More than 10% below target
+            adjusted_risk_level = "CRITICAL"
+            color = "#dc2626"
+        elif appetite_severity < -0.05 or p > 0.85:  # 5-10% below or high model prob
+            adjusted_risk_level = "HIGH RISK"
+            color = "#ea580c"
+        elif appetite_severity < 0 or p > 0.60:  # Slightly below or moderate prob
+            adjusted_risk_level = "MONITOR"
+            color = "#f59e0b"
+        else:  # Meeting or exceeding targets
+            adjusted_risk_level = "STABLE"
+            color = "#10b981"
+        
+        icon = "🚨" if adjusted_risk_level == "CRITICAL" else ("⚠️" if "RISK" in adjusted_risk_level else ("📊" if "MONITOR" in adjusted_risk_level else "✅"))
     else:
-        p, birds, val_at_risk, color, label = 0.0, 0, 0, "#94a3b8", "NO DATA"
+        data = {}
+        p, birds, val_at_risk, color, adjusted_risk_level, icon = 0.0, 0, 0, "#94a3b8", "NO DATA", "⚠️"
     
     with cols[i]:
+        feed_str = f"{data.get('actual_feed', 0):.0f}g" if data else "N/A"
+        target_feed_str = f"{data.get('target_feed', 0):.0f}g" if data else "N/A"
+        
         st.markdown(f"""
         <div style="padding:15px; border-radius:12px; border:3px solid {color}; text-align:center; background-color:rgba(0,0,0,0.1);">
             <h3 style="margin:0;">{zone}</h3>
-            <p style="color:{color}; font-weight:bold; font-size:1.1em; margin:5px 0;">{label}</p>
-            <p style="font-size:1.3em; margin:0;"><b>{p:.1%}</b> Crisis Probability</p>
-            <hr style="margin:10px 0; border:0.5px solid #475569;">
-            <p style="font-size:0.85em; color:#94a3b8; margin:0;">Population: <b>{birds:,} birds</b></p>
-            <p style="font-size:0.95em; color:#f8fafc; margin-top:5px;">Value at Risk: <b>${val_at_risk:,.0f}</b></p>
+            <p style="color:{color}; font-weight:bold; font-size:0.95em; margin:5px 0;">{icon} {adjusted_risk_level}</p>
+            <p style="font-size:1.2em; margin:3px 0;"><b>{p:.1%}</b> Pattern Match</p>
+            <hr style="margin:8px 0; border:0.5px solid #475569;">
+            <p style="font-size:0.8em; color:#cbd5e1; margin:3px 0;">Feed: {feed_str} / {target_feed_str}</p>
+            <p style="font-size:0.8em; color:#cbd5e1; margin:0px 0;">Pop: <b>{birds:,}</b> birds</p>
+            <p style="font-size:0.85em; color:#fef3c7; margin-top:5px;"><b>${val_at_risk:,.0f}</b> at risk</p>
         </div>
         """, unsafe_allow_html=True)
+
+# --- 4.5 Appetite Gap Deep Dive (Business-Ready Insight) ---
+st.divider()
+st.subheader("📉 Appetite Gap Analysis: Actual vs. Biological Targets")
+st.markdown("*This is the REAL diagnostics: how far are your birds from healthy intake targets?*")
+
+gap_cols = st.columns(4)
+for i, zone in enumerate(zone_names):
+    if zone in zone_risk_map:
+        data = zone_risk_map[zone]
+        age = data['age']
+        actual_feed = data['actual_feed']
+        target_feed = data['target_feed']
+        actual_water = data['actual_water']
+        target_water = data['target_water']
+        
+        feed_pct_of_target = (actual_feed / target_feed) * 100 if target_feed > 0 else 0
+        water_pct_of_target = (actual_water / target_water) * 100 if target_water > 0 else 0
+        
+        with gap_cols[i]:
+            st.markdown(f"**{zone} (Age {age} days)**")
+            
+            # Feed intake
+            st.markdown("**🌾 Feed Intake**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Actual", f"{actual_feed:.0f}g", f"{feed_pct_of_target:.0f}%")
+            with col2:
+                st.metric("Target", f"{target_feed:.0f}g", f"100%")
+            
+            # Water intake  
+            st.markdown("**💧 Water Intake**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Actual", f"{actual_water:.0f}ml", f"{water_pct_of_target:.0f}%")
+            with col2:
+                st.metric("Target", f"{target_water:.0f}ml", f"100%")
+            
+            # Severity indicator
+            gap_severity = min(feed_pct_of_target, water_pct_of_target)
+            if gap_severity < 90:
+                st.error("⛔ CRITICAL GAP: <90% of target")
+            elif gap_severity < 95:
+                st.warning("⚠️ SIGNIFICANT GAP: 90-95% of target")
+            elif gap_severity < 100:
+                st.info("📊 MINOR GAP: 95-100% of target")
+            else:
+                st.success("✅ ABOVE TARGET: >100%")
 
 # --- 5. Interactive Diagnostic Area ---
 st.divider()
@@ -177,10 +283,28 @@ if not q_row.empty:
     col_sim, col_shap = st.columns([1, 1.5])
     with col_sim:
         st.subheader("💡 What-If Analysis")
-        st.write("Forecasted risk if you intervene now:")
-        st.metric("Future Risk Score", f"{sim_prob:.1%}", delta=f"{sim_prob - orig_prob:.1%}", delta_color="inverse")
+        st.write("**Forecast risk if you intervene now:**")
+        
+        # Calculate appetite gap for this zone
+        feed_gap = (s_feed - target_f) / target_f
+        water_gap = (s_water - target_w) / target_w
+        gap_health = max(feed_gap, water_gap)
+        
+        st.metric("Future Pattern Match", f"{sim_prob:.1%}", delta=f"{sim_prob - orig_prob:.1%}", delta_color="inverse")
         st.progress(sim_prob)
-        st.write(f"**Intervention Guide:** Moving your sensors toward the **Age {age} Targets** reduces the crisis probability.")
+        
+        # Actionable guidance
+        if gap_health < -0.05:
+            st.error(f"🔴 Intake is {abs(gap_health)*100:.0f}% BELOW target. This is driving high pattern match.")
+            st.markdown(f"""
+            **Action**: Move intake toward targets:
+            - Feed target: {target_f:.0f}g (current: {s_feed:.0f}g)
+            - Water target: {target_w:.0f}ml (current: {s_water:.0f}ml)
+            """)
+        elif gap_health < 0:
+            st.warning(f"⚠️ Intake is {abs(gap_health)*100:.0f}% below target. Still in safe margin but monitor.")
+        else:
+            st.success(f"✅ Intake is {gap_health*100:.0f}% ABOVE target. Low risk of appetite-driven issues.")
 
     with col_shap:
         st.subheader(f"📊 Root Cause Diagnosis: {sel_zone_name}")
