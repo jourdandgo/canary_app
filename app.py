@@ -9,6 +9,7 @@ import pickle
 import os
 import requests
 import time
+import xgboost as xgb
 from sklearn.metrics import accuracy_score
 from datetime import datetime, timedelta
 
@@ -19,7 +20,7 @@ def call_gemini_with_retry(prompt, api_key):
     if not api_key:
         return "⚠️ Error: Please enter your Gemini API Key in the sidebar to generate the action plan."
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     payload = {
         "contents": [{ "parts": [{ "text": prompt }] }],
         "systemInstruction": { "parts": [{ "text": "You are a pragmatic, business-focused Poultry Operations Consultant. Speak directly to the farm owner. You will receive data that includes a 'Mathematical Directive' from DiCE. Your job is to translate that math into operational reality. Segregate your advice strictly into two sections: 1) 'Quick Wins' (actions for the next 4 hours to hit the DiCE target) and 2) 'Strategic Initiatives'. Use bolding and bullet points." }] }
@@ -29,15 +30,17 @@ def call_gemini_with_retry(prompt, api_key):
             response = requests.post(url, json=payload, timeout=15)
             if response.status_code == 200:
                 return response.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', "No response generated.")
+            else:
+                # This will print the exact reason Google rejected the key/call
+                return f"⚠️ Google API Connection Error (Code {response.status_code}): {response.text}"
+        except Exception as e:
             time.sleep(2**i)
-        except:
-            time.sleep(2**i)
-    return "⚠️ The LLM Advisor is temporarily offline or the API key is invalid."
+    return f"⚠️ System Exception: Failed to connect to Google API after retries."
 
 # --- 1. Load Assets ---
 @st.cache_resource
 def load_artifacts():
-    with open('model.pkl', 'rb') as f:
+    with open('xgboost_model_retrained.pkl', 'rb') as f:
         model = pickle.load(f)
     with open('X_train_data_retrained.pkl', 'rb') as f:
         X_train_data = pickle.load(f)
@@ -81,10 +84,13 @@ df_hist, df_live = get_dashboard_data(label_encoder, X_train.columns)
 
 # --- 3. Header & Narrative ---
 st.sidebar.markdown("---")
-st.sidebar.header("🔑 LLM Configuration")
-user_api_key = st.sidebar.text_input("Gemini API Key (Required for Advisor)", type="password")
+st.sidebar.header("🔑 AI Executive Configuration")
+st.sidebar.markdown("The Automated Action Plans require a free Google Gemini API Key.")
+st.sidebar.markdown("[👉 Click here to get your free key](https://aistudio.google.com/app/apikey)")
+user_api_key = st.sidebar.text_input("Paste Gemini API Key Here:", type="password")
+
 if not user_api_key:
-    st.sidebar.warning("⚠️ Please enter your Gemini API key to unlock the AI Action Plans.")
+    st.sidebar.warning("⚠️ Enter key above to unlock the Prescriptive AI.")
 
 st.title('🐔 Automated Canary: Farm Operations Center')
 st.markdown("### Stop outbreaks today. Protect your profits tomorrow.")
@@ -126,7 +132,7 @@ for i, zone in enumerate(zone_names):
         birds = zone_risk_map[zone]['birds']
         age = zone_risk_map[zone]['age']
         
-        # FIXED VaR: Scaled Mortality based on Age (Heavier birds die faster in heat)
+        # Age scaled mortality logic
         base_mortality = int(birds * 0.0005) 
         age_multiplier = min(1.0, age / 45.0) 
         outbreak_mortality_spike = int(birds * (0.005 + (0.045 * age_multiplier))) # 0.5% to 5.0% spike
@@ -175,12 +181,11 @@ if not q_row.empty:
     target_f = (age * 4.8) + 20
     target_w = target_f * 2.1
 
-    # --- NEW: Historical Proof Chart ---
+    # Historical Proof Chart
     st.subheader("📉 The 'Aha!' Moment: 7-Day Trend")
     st.write("Why is the AI flagging this zone? Look at how the rising heat has suppressed their appetite over the last week.")
     
     past_7_days = df_hist[df_hist['Zone_ID'] == sel_zone_name].tail(7)
-    # Re-append today's live data point to complete the chart
     chart_data = pd.concat([past_7_days, q_row])
     
     fig_trend, ax1 = plt.subplots(figsize=(10, 3))
@@ -211,22 +216,29 @@ if not q_row.empty:
         s_hum = st.slider("Target Humidity (%)", 30.0, 100.0, float(orig_input['Avg_Humidity_Percent'].iloc[0]))
         
     with col_sim_bio:
-        st.markdown("#### 🐔 Step 2: Biological Recovery (Auto-Calculated)")
-        st.success("UX UPGRADE: You cannot force sick birds to eat. As you lower the temperature slider on the left, the AI automatically calculates how quickly their appetite will recover towards the healthy target.")
+        st.markdown("#### 🐔 Step 2: Biological Status (Auto-Calculated)")
+        st.success("XGBoost Math Upgrade: The underlying math model enforces strict biological limits. As you adjust temperature, biological symptoms adjust systematically.")
         
-        # NEW FIX: The Simulator Paradox Logic
-        temp_improvement = float(orig_input['Max_Temperature_C'].iloc[0]) - s_temp
-        if temp_improvement > 0:
-            # Recover 15% of the appetite gap per 1 degree of cooling
-            recovery_factor = min(1.0, temp_improvement * 0.15)
+        orig_temp = float(orig_input['Max_Temperature_C'].iloc[0])
+        temp_diff = s_temp - orig_temp
+        
+        if temp_diff < 0:
+            recovery_factor = min(1.0, abs(temp_diff) * 0.15)
             s_feed = orig_input['Avg_Feed_Intake_g'].iloc[0] + (target_f - orig_input['Avg_Feed_Intake_g'].iloc[0]) * recovery_factor
             s_water = orig_input['Avg_Water_Intake_ml'].iloc[0] + (target_w - orig_input['Avg_Water_Intake_ml'].iloc[0]) * recovery_factor
+            st.caption("Status: Stabilizing 📉")
+        elif temp_diff > 0:
+            decline_factor = min(0.8, temp_diff * 0.10)
+            s_feed = orig_input['Avg_Feed_Intake_g'].iloc[0] * (1 - decline_factor)
+            s_water = orig_input['Avg_Water_Intake_ml'].iloc[0] * (1 + decline_factor * 0.5)
+            st.caption("Status: Deteriorating 📈")
         else:
             s_feed = orig_input['Avg_Feed_Intake_g'].iloc[0]
             s_water = orig_input['Avg_Water_Intake_ml'].iloc[0]
+            st.caption("Status: Unchanged")
             
-        st.metric("Simulated Feed Recovery", f"{s_feed:.1f}g", f"Target: {target_f:.0f}g")
-        st.metric("Simulated Water Recovery", f"{s_water:.1f}ml", f"Target: {target_w:.0f}ml")
+        st.metric("Simulated Feed Intake", f"{s_feed:.1f}g", f"Target: {target_f:.0f}g")
+        st.metric("Simulated Water Intake", f"{s_water:.1f}ml", f"Target: {target_w:.0f}ml")
 
     # Calculate Simulation
     sim_row = orig_input.copy()
@@ -235,6 +247,9 @@ if not q_row.empty:
     sim_row['Avg_Water_Intake_ml'] = s_water
     sim_row['Avg_Feed_Intake_g'] = s_feed
     sim_row['Water_Feed_Ratio'] = s_water / (s_feed + 1e-5)
+    
+    sim_row['Temp_Avg_3D'] = orig_input['Temp_Avg_3D'].iloc[0] + (temp_diff / 3.0)
+    sim_row['Temp_Change_3D'] = orig_input['Temp_Change_3D'].iloc[0] + temp_diff
     
     sim_prob = model.predict_proba(sim_row[feature_cols].astype(float))[0][1]
 
@@ -262,7 +277,6 @@ if not q_row.empty:
                 
             feat_impacts = pd.Series(sv_array, index=feature_cols).sort_values(ascending=True)
             
-            # Prevent empty plot if all SHAP values are exactly 0
             if feat_impacts.abs().sum() == 0:
                 st.info("Risk is exactly at baseline. No driving factors to display.")
             else:
@@ -296,46 +310,48 @@ if not q_row.empty:
     st.write("We run the mathematical algorithm (DiCE) to find the minimum environmental targets, then pass those targets to the AI Operations Consultant (Gemini) to write the execution plan.")
     
     if st.button("Generate Integrated Action Plan", type="primary"):
-        with st.spinner("Step 1/2: Running DiCE Mathematics to find the precise recovery threshold..."):
-            d_query = df_live[df_live['Zone_ID'] == sel_zone_name][feature_cols].astype(float)
-            dice_directive = "No simple environmental shortcut found. Aggressive manual intervention required."
-            
-            try:
-                X_h = df_hist[feature_cols]
-                y_h = label_encoder.transform(df_hist['Target_Status'])
-                dice_data = dice_ml.Data(dataframe=pd.concat([X_h.astype(float), pd.Series(y_h, name='Target_Status', index=X_h.index)], axis=1), continuous_features=[c for c in X_h.columns if 'Zone_ID' not in c], categorical_features=[c for c in X_h.columns if 'Zone_ID' in c], outcome_name='Target_Status')
-                exp = dice_ml.Dice(dice_data, dice_ml.Model(model=model, backend='sklearn'), method='random')
+        if not user_api_key:
+            st.error("⚠️ Stop: Please paste your Gemini API Key in the left sidebar to use this feature.")
+        else:
+            with st.spinner("Step 1/2: Running DiCE Mathematics to find the precise recovery threshold..."):
+                d_query = df_live[df_live['Zone_ID'] == sel_zone_name][feature_cols].astype(float)
+                dice_directive = "No simple environmental shortcut found. Aggressive manual intervention required."
                 
-                # DiCE can vary all inputs to find a mathematically sound counterfactual
-                env_controllables = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Feed_Intake_g', 'Avg_Water_Intake_ml']
-                cf = exp.generate_counterfactuals(d_query, total_CFs=1, desired_class=0, features_to_vary=env_controllables)
+                try:
+                    X_h = df_hist[feature_cols]
+                    y_h = label_encoder.transform(df_hist['Target_Status'])
+                    dice_data = dice_ml.Data(dataframe=pd.concat([X_h.astype(float), pd.Series(y_h, name='Target_Status', index=X_h.index)], axis=1), continuous_features=[c for c in X_h.columns if 'Zone_ID' not in c], categorical_features=[c for c in X_h.columns if 'Zone_ID' in c], outcome_name='Target_Status')
+                    exp = dice_ml.Dice(dice_data, dice_ml.Model(model=model, backend='sklearn'), method='random')
+                    
+                    env_controllables = ['Max_Temperature_C', 'Avg_Humidity_Percent', 'Avg_Feed_Intake_g', 'Avg_Water_Intake_ml']
+                    cf = exp.generate_counterfactuals(d_query, total_CFs=1, desired_class=0, features_to_vary=env_controllables)
+                    
+                    if cf.cf_examples_list[0].final_cfs_df is not None:
+                        target_temp_dice = cf.cf_examples_list[0].final_cfs_df['Max_Temperature_C'].iloc[0]
+                        target_feed_dice = cf.cf_examples_list[0].final_cfs_df['Avg_Feed_Intake_g'].iloc[0]
+                        dice_directive = f"DiCE Mathematical Directive: We MUST drop the physical barn temperature to {target_temp_dice:.1f}°C. This is scientifically calculated to restore their feed intake to {target_feed_dice:.0f}g, flipping the flock back to Healthy status."
+                except Exception as e:
+                    pass 
+            
+            with st.spinner("Step 2/2: Consulting Gemini LLM to write the Operations Plan..."):
+                prompt = f"""
+                Zone: {sel_zone_name}. Population: {birds_count} birds (Age {age}).
+                Forecasted Sickness Probability: {orig_prob:.1%}.
+                Current Environment: {float(orig_input['Max_Temperature_C'].iloc[0]):.1f}C.
                 
-                if cf.cf_examples_list[0].final_cfs_df is not None:
-                    target_temp_dice = cf.cf_examples_list[0].final_cfs_df['Max_Temperature_C'].iloc[0]
-                    target_feed_dice = cf.cf_examples_list[0].final_cfs_df['Avg_Feed_Intake_g'].iloc[0]
-                    dice_directive = f"DiCE Mathematical Directive: We MUST drop the physical barn temperature to {target_temp_dice:.1f}°C. This is scientifically calculated to restore their feed intake to {target_feed_dice:.0f}g, flipping the flock back to Healthy status."
-            except Exception as e:
-                pass 
-        
-        with st.spinner("Step 2/2: Consulting Gemini LLM to write the Operations Plan..."):
-            prompt = f"""
-            Zone: {sel_zone_name}. Population: {birds_count} birds (Age {age}).
-            Forecasted Sickness Probability: {orig_prob:.1%}.
-            Current Environment: {float(orig_input['Max_Temperature_C'].iloc[0]):.1f}C.
-            
-            {dice_directive}
-            
-            Based on the math above, generate an operations report for the farm owner. 
-            Separate exactly into:
-            1. 'Quick Wins': 3 specific physical actions the barn crew must do in the next 4 hours to hit the DiCE temperature target.
-            2. 'Strategic Initiatives': 2 long-term upgrades.
-            """
-            llm_response = call_gemini_with_retry(prompt, user_api_key)
-            
-        st.success("Analysis Complete")
-        st.info(dice_directive)
-        st.markdown("### AI Operations Consultant Report")
-        st.markdown(llm_response)
+                {dice_directive}
+                
+                Based on the math above, generate an operations report for the farm owner. 
+                Separate exactly into:
+                1. 'Quick Wins': 3 specific physical actions the barn crew must do in the next 4 hours to hit the DiCE temperature target.
+                2. 'Strategic Initiatives': 2 long-term upgrades.
+                """
+                llm_response = call_gemini_with_retry(prompt, user_api_key)
+                
+            st.success("Analysis Complete")
+            st.info(dice_directive)
+            st.markdown("### AI Operations Consultant Report")
+            st.markdown(llm_response)
 
 else:
     st.error("Missing Data: Please verify sensor connections.")
