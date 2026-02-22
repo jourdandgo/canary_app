@@ -366,3 +366,4 @@ else:
     st.error("Missing Data: Please verify sensor connections.")
 
 st.caption("Master's Thesis Project | Automated Canary System | Powered by XAI & Gemini 1.5 Flash")
+
